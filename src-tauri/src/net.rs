@@ -432,6 +432,8 @@ fn edge_operation(path: &str) -> &'static str {
         "category"
     } else if path.starts_with("/api/videos/") && path.ends_with("/play") {
         "play"
+    } else if path.starts_with("/api/videos/") && path.ends_with("/playback") {
+        "play"
     } else if path == "/api/videos" {
         "feed"
     } else if path.starts_with("/api/videos/") {

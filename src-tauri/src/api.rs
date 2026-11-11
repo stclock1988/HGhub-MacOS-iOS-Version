@@ -23,6 +23,13 @@ impl Api {
         edge(&origin, "GET", path, None, token.as_deref()).await
     }
 
+    /// 游客 POST（无请求体时发 `{}`）：播放地址解析等新接口用，登录态沿用 get 的 token 规则。
+    async fn post(&self, path: &str) -> Result<Value, String> {
+        let origin = base();
+        let token = self.session.token(&origin);
+        edge(&origin, "POST", path, Some(json!({})), token.as_deref()).await
+    }
+
     async fn authed(&self, method: &str, path: &str, body: Option<Value>) -> Result<Value, String> {
         let origin = base();
         let token = self
@@ -465,9 +472,41 @@ pub async fn api_video(state: State<'_, Api>, id: i64) -> Result<Value, String> 
 
 #[tauri::command]
 pub async fn api_play(state: State<'_, Api>, id: i64, ep: u32) -> Result<Value, String> {
-    state
-        .get(&format!("/api/videos/{id}/play?ep={ep}&page_texts=0"))
-        .await
+    // 根因（2026-11-11 实测）：上游已废弃 GET /api/videos/{id}/play，
+    // 它现在只回 status 1 + video_url 空串（游客/详情/列表同样无地址），
+    // 所以播放器根本不会挂载，只剩封面。官网改用
+    // POST /api/videos/{id}/episodes/{ep}/playback，
+    // data.streams.main 即 m3u8（与上游 1.2.18 日志里的主机一致）。
+    // 这里仍按旧 PlayInfo 形状返回，前端不用改。
+    let v = state
+        .post(&format!("/api/videos/{id}/episodes/{ep}/playback"))
+        .await?;
+    let streams = v.get("streams").cloned().unwrap_or_default();
+    let pick = |k: &str| {
+        streams
+            .get(k)
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let main = pick("main");
+    let preview = pick("preview");
+    let hevc = pick("hevc");
+    let url = if !main.is_empty() {
+        main
+    } else if !preview.is_empty() {
+        preview
+    } else {
+        hevc.clone()
+    };
+    Ok(json!({
+        "id": id,
+        "ep_num": ep,
+        "duration": 0,
+        "title": "",
+        "video_url": url,
+        "video_url_hevc": hevc,
+    }))
 }
 
 /* ───────────────────────── 评论 / 互动 ───────────────────────── */
