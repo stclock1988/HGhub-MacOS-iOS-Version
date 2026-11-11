@@ -143,3 +143,22 @@ Android 继续 `http://hg.localhost` + MSE。
   的系统库（`gdk-3.0` 等），与本次改动无关；Rust iOS 目标与真机
   播放只能由 CI（macOS 构建）+ 真机验证。
 - 未做：Xcode 真机编译、真机播放、SideStore / LiveContainer 对照。
+
+## 1.2.1 真机日志结论（2026-11-11，Han 的 playback.log）
+
+- 版本确认 1.2.1，iPhone 18.7，`native_hls: true`，`media_source: false`，
+  `managed_media_source: true`。
+- 上游与代理都正常：`api.play` 返回 200，全部封面经 `hg://` 协议返回 200。
+- **播放器一次都没启动**：26 秒的 feed 停留里没有任何 `source.load`、
+  `page.active`、`play.request`——`VideoSurface` 根本没挂载，界面只有
+  封面分支。两种可能：`api.play` 200 但 `video_url` 为空（会弹
+  “暂无播放地址”），或取端口的 `invoke` 挂住（`startNative` 在 `await`
+  处等不到结果，`source.load` 在 `await` 之后所以永远不出现，且 12 秒
+  回退定时器也在 `await` 之后才设，同样不会触发）。
+- 日志本身有个缺口：`media.server` 只在 App 启动时记一条，日志若是
+  启动后才打开，那条就丢了——本次日志里就没有它，所以无法判断本机
+  服务器到底起没起来。
+- 1.2.2 的改动就是补这个缺口：开日志时也补记 `media.server`；取播放
+  地址记 `play.url`（`has_url`）与 `play.failed`；原生启动前记
+  `native.waiting`；`media_server_port` 桥接调用 5 秒超时（超时按服
+  务未启动处理，回退 hls.js，不再无限等）。
