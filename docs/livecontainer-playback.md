@@ -314,3 +314,23 @@ Android 继续 `http://hg.localhost` + MSE。
   DOM 全屏。诊断加 `webkitpresentationmodechanged` 事件。版本
   1.2.7。点全屏后如果画面动起来、有声音了，就说明系统播放器
   这条路通；如果还是不动，下一步是 Tauri 的原生 AVPlayer 插件。
+
+## 1.2.7 未测到：系统全屏一次都没触发（2026-11-11 14:18，upload-20.txt，pid 1821）
+
+- Han 说 14:18 这份就是点了全屏的，但日志里 `video.sys_fullscreen`
+  与 `webkitpresentationmodechanged` 各 0 次。呈现还是死的：
+  进度条 0.35→53.29 秒在走，50 秒只呈现 3 帧，取消静音还是没声。
+- 排除：日志的 `view= home` 说明他在信息流里；app.start 的 UA
+  是 iPhone iOS 18_7，`isIos` 为真；控制栏的“全屏”按钮确实接
+  着 `toggleFull`（PlayerControls 唯一实例，`onFullscreen={toggleFull}`），
+  且同一个 `videoRef` 的拖动、静音都在日志里正常工作（非空）。
+  所以按钮的点按没走到 `systemFullscreen()`——最可能是点成了
+  旁边相邻的“影院模式”按钮，或者控制栏自动隐藏后第一下只调出
+  了控制栏。还有一个漏掉的面：详情页的 `Player.tsx` 有自己独立
+  的 `toggleFull`（只做 DOM 全屏，没接系统路径）。
+- 1.2.8 的改动：① `toggleFull`（Feed）先记一笔
+  `video.fullscreen_tap`（带 ios 标志），再走系统路径——下一份
+  日志能分清“没点到按钮”还是“点了但系统路径没跑起来”；
+  ② `Player.tsx` 的 `toggleFull` 也接上同样的系统全屏路径
+  （webkitEnterFullscreen / webkitSetPresentationMode，带 trace）。
+  版本 1.2.8。
