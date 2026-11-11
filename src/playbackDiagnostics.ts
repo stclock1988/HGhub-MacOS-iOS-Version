@@ -137,6 +137,23 @@ export function usePlayerDiagnostics(videoRef: RefObject<HTMLVideoElement | null
     const v = videoRef.current;
     if (!v) return;
     let frame: number | undefined;
+    // 持续统计真正呈现到屏幕的视频帧数：1.2.5 出现“进度条走、画面不动”，
+    // 只靠 currentTime 分辨不出来。心跳里带 frames_presented 与最近一帧
+    // 的媒体时间：播放 5 秒应涨约 120~150 帧（24/30fps），涨 0 说明画面
+    // 真没呈现（而不是被遮住）。
+    let framesPresented = 0;
+    let lastFrameTime: number | null = null;
+    let frameLoop: number | undefined;
+    const countFrame = (_now: number, metadata: { mediaTime: number }) => {
+      framesPresented += 1;
+      lastFrameTime = metadata.mediaTime;
+      if (v.requestVideoFrameCallback) {
+        frameLoop = v.requestVideoFrameCallback(countFrame);
+      }
+    };
+    if (v.requestVideoFrameCallback) {
+      frameLoop = v.requestVideoFrameCallback(countFrame);
+    }
     let lastHeartbeat = 0;
     let timeoutReported = 0;
     const emit = (event: string, data: Data = {}) => {
@@ -179,7 +196,7 @@ export function usePlayerDiagnostics(videoRef: RefObject<HTMLVideoElement | null
         timeoutReported = p.id;
         emit("seek.timeout", { seek: p.id, target: round(p.target), elapsed_ms: Math.round(performance.now() - p.start) });
       }
-      if (performance.now() - lastHeartbeat >= 5000) { lastHeartbeat = performance.now(); emit("player.heartbeat"); }
+      if (performance.now() - lastHeartbeat >= 5000) { lastHeartbeat = performance.now(); emit("player.heartbeat", { frames_presented: framesPresented, last_frame_time: lastFrameTime == null ? null : round(lastFrameTime) }); }
     }, 1000);
     emit("player.mount");
     return () => {
@@ -187,6 +204,7 @@ export function usePlayerDiagnostics(videoRef: RefObject<HTMLVideoElement | null
       events.forEach(event => v.removeEventListener(event, onEvent));
       clearInterval(heartbeat); unsubscribe();
       if (frame != null) v.cancelVideoFrameCallback?.(frame);
+      if (frameLoop != null) v.cancelVideoFrameCallback?.(frameLoop);
     };
   }, []);
   useEffect(() => { trace("player.context"); }, [context.active, context.view, context.video_id, context.episode, context.resource]);

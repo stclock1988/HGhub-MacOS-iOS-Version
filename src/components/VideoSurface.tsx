@@ -421,7 +421,10 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
         className={`w-full h-full bg-black ${fit === "cover" ? "object-cover" : "object-contain"}`}
         style={{
           opacity: ready ? 1 : 0,
-          transform: hasTransform ? `translate3d(${panX}px, ${panY}px, 0) scale(${scale})` : "translateZ(0)",
+          // 1.2.6 候选修复：不缩放时去掉 translateZ(0) 强制合成层——在
+          // LiveContainer 的 WKWebView 里它可能让视频层一直显示旧帧
+          // （进度条走、画面不动）；缩放手势时仍用 translate3d。
+          transform: hasTransform ? `translate3d(${panX}px, ${panY}px, 0) scale(${scale})` : undefined,
           transformOrigin: "center center",
           transition: isGesturing ? "opacity .25s" : "opacity .25s, transform .2s cubic-bezier(.2,0,0,1)",
         }}
