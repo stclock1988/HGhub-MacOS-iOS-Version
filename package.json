@@ -2,7 +2,7 @@
   "name": "hghub-macos-ios",
   "description": "HGhub · 黄果短剧跨平台客户端 (macOS & iOS 增强版)",
   "private": true,
-  "version": "1.2.6",
+  "version": "1.2.7",
   "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "scripts": {
