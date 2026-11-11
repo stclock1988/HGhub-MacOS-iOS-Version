@@ -252,8 +252,16 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
     };
   }, [isDesktop, active, setFs, keepPlayingThroughTransition]);
 
-  /* 进入 / 退出全屏：对横屏视频直接调用原生屏幕方向切换，让手机系统界面真正横过来 */
+  /* 进入 / 退出全屏：对横屏视频直接调用原生屏幕方向切换，让手机系统界面真正横过来。
+     1.2.9：手机端真正能点的“全屏”按钮（右侧操作栏与“横屏全屏”）
+     走的都是 enterFs，不是 PlayerControls 的 toggleFull——1.2.7
+     只接了 toggleFull，所以系统路径一次都没触发。先试系统播放器
+     全屏（webkitEnterFullscreen），把呈现交给系统 AVPlayer 层，
+     绕开 WKWebView 在 LiveContainer 里几乎不呈现帧的合成器；
+     系统播放器接管了就不用再开 CSS 全屏，不可用时再走原来的路。 */
   const enterFs = useCallback(() => {
+    videoRef.current?.trace("video.fullscreen_tap", { ios: isIos, via: "enterFs" });
+    if (isIos && videoRef.current?.systemFullscreen()) return;
     keepPlayingThroughTransition();
     setClean(false);
     setFs(true);

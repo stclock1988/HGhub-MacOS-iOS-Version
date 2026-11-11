@@ -334,3 +334,20 @@ Android 继续 `http://hg.localhost` + MSE。
   ② `Player.tsx` 的 `toggleFull` 也接上同样的系统全屏路径
   （webkitEnterFullscreen / webkitSetPresentationMode，带 trace）。
   版本 1.2.8。
+
+## 找到根因：手机端真正能点的“全屏”按钮走的是 enterFs（2026-11-11 14:31，截图）
+
+- Han 发了两张截图并说“点了画面没有控制栏”。第二张（信息流竖
+  屏）看清了手机端 UI：右侧操作栏是 收藏 / 评论 / 全屏 / 分享，
+  点画面并不会调出 PlayerControls 控制栏——手机端根本没有那条
+  控制栏。第一张是横屏全屏后的样子（暂停、0:11、1x、3:27、
+  进度条），是应用自己的 CSS 全屏，画面还是黑的、只有水印。
+- 根因：手机端真正能点的“全屏”按钮（右侧操作栏 line 1070 与
+  “横屏全屏” line 1023）走的都是 `enterFs`，它只做
+  `setFs(true)` + 横屏方向锁定，根本不走系统播放器。1.2.7 只接
+  了 PlayerControls 的 `toggleFull`（桌面端控制栏），手机上没人
+  能点到它——所以 `video.sys_fullscreen` 一次都没出现过。
+- 1.2.9 的改动：`enterFs` 先记一笔 `video.fullscreen_tap`
+  （via: "enterFs"），再试 `systemFullscreen()`（系统播放器接管
+  了就不再开 CSS 全屏）；不可用时回落到原来的 CSS 全屏 + 方向
+  锁定。版本 1.2.9。点右侧操作栏的“全屏”就会走系统播放器。
