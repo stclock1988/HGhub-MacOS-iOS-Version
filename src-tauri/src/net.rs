@@ -614,6 +614,22 @@ pub async fn edge(
 }
 
 /// 拉原始字节（图片 / m3u8 / 分片）。
+/// 分段读 body：3 秒内没到新数据就判停滞并报错，让 with_retry 立刻重拉。
+/// 1.2.4 日志：分片首试经常在 body 中途断掉（transport_error，7~9 秒
+/// 才失败），重试 1 秒多就通——干等是卡顿的直接原因。这是“无数据超时”，
+/// 慢但持续有数据的连接不会误杀（chunk 不停到就不会超时）。
+async fn read_body(resp: &mut reqwest::Response) -> Result<Vec<u8>, String> {
+    let mut body = Vec::new();
+    loop {
+        match tokio::time::timeout(Duration::from_secs(3), resp.chunk()).await {
+            Ok(Ok(Some(chunk))) => body.extend_from_slice(&chunk),
+            Ok(Ok(None)) => return Ok(body),
+            Ok(Err(e)) => return Err(err_text(&e)),
+            Err(_) => return Err("下载停滞超时，重新拉取".to_string()),
+        }
+    }
+}
+
 pub async fn fetch_bytes(url: &str) -> Result<(Option<String>, Vec<u8>), String> {
     static NEXT_REQUEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let request = NEXT_REQUEST.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -633,7 +649,7 @@ pub async fn fetch_bytes(url: &str) -> Result<(Option<String>, Vec<u8>), String>
             let mut status = None;
             let mut headers_ms = None;
             let result = async {
-                let resp = get(&url, Duration::from_secs(20), None, Some(&referer)).await?;
+                let mut resp = get(&url, Duration::from_secs(20), None, Some(&referer)).await?;
                 status = Some(resp.status().as_u16());
                 headers_ms = Some(started.elapsed().as_millis() as u64);
                 if !resp.status().is_success() {
@@ -644,7 +660,7 @@ pub async fn fetch_bytes(url: &str) -> Result<(Option<String>, Vec<u8>), String>
                     .get(reqwest::header::CONTENT_TYPE)
                     .and_then(|v| v.to_str().ok())
                     .map(|s| s.to_string());
-                let bytes = resp.bytes().await.map_err(|e| err_text(&e))?.to_vec();
+                let bytes = read_body(&mut resp).await?;
                 Ok((ctype, bytes))
             }.await;
             crate::playback_log::record("network.end", json!({"request": request, "resource": resource, "attempt": attempt, "status": status, "headers_ms": headers_ms, "elapsed_ms": started.elapsed().as_millis() as u64, "bytes": result.as_ref().ok().map(|(_, bytes)| bytes.len()), "error_kind": result.as_ref().err().map(|e: &String| crate::playback_log::error_kind(e))}));
