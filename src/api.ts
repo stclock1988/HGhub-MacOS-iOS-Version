@@ -105,6 +105,15 @@ export async function nativePlaybackUrl(src: string): Promise<string | null> {
   return `${origin}/seg?u=${encodeURIComponent(src)}`;
 }
 
+/** 原生 AVPlayer 播放（iOS）：用应用进程内的 AVPlayerViewController 播
+ * 本机媒体服务器的地址，彻底绕开 WebKit。1.2.10：LiveContainer 里
+ * WKWebView 的视频呈现已死（ inline 与系统全屏都走同一条 WebKit 媒体
+ * 管线），原生播放器是唯一能出画面和声音的路。Promise 在播放器关闭时
+ * 兑现，返回关闭时的进度（秒）；播放器已开着时拒绝。 */
+export async function playNative(url: string): Promise<{ position: number }> {
+  return invoke<{ position: number }>("plugin:native-player|play", { url });
+}
+
 /* ── 调用封装 ───────────────────────────────────────────── */
 
 /** 写一行到应用数据目录 debug.log（用户反馈「打不开」时要的就是它） */
