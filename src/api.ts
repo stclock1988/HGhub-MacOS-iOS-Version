@@ -58,7 +58,13 @@ export function getPlaybackEngine(): PlaybackEngine {
     const saved = localStorage.getItem(ENGINE_KEY);
     if (saved === "native" || saved === "hlsjs") return saved;
   } catch { /* ignore */ }
-  return isIos ? "native" : "hlsjs";
+  // 1.2.4：iOS 默认改回网页播放（hls.js）。1.2.1 建原生路线的假
+  // 设是“hls.js + ManagedMediaSource 在 LiveContainer 里播不了”，
+  // 但 1.2.18 日志证明它能正常播（3483 第 1 集，time 0→7.266 实
+  // 时走）；反而默认的原生在 1.2.3 日志里全程卡住：buffered 涨到
+  // 100s、readyState 4、未暂停、无 error，但 currentTime 恒 0、
+  // seek 后也没有新帧呈现。原生仍可在设置里手动切回来。
+  return "hlsjs";
 }
 export function setPlaybackEngine(engine: PlaybackEngine) {
   try { localStorage.setItem(ENGINE_KEY, engine); } catch { /* ignore */ }

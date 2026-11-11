@@ -339,11 +339,19 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
       video.addEventListener("error", nativeErrorHandler);
       // 原生 12 秒仍无数据（readyState < 2）且页面还在前台：切 hls.js。
       // 用户已暂停的不算失败——回退后 activity 会按 wanted 状态决定播不播。
+      // 另外一种冻结也要回退：readyState 已够、未暂停，但 12 秒后时钟
+      // 还在 0 附近——1.2.3 日志的形态（buffered 涨到 100s、time 恒 0、
+      // 无 error、seek 后也无新帧）。已有的 readyState 检查拦不住它，
+      // 因为这时 readyState 是 4。
       fallbackTimer = window.setTimeout(() => {
         if (cancelled || nativeFailed) return;
-        if (video.readyState < 2 && activity.isActive()) {
+        if (!activity.isActive() || video.paused) return;
+        if (video.readyState < 2) {
           trace("native.stalled", { ready_state: video.readyState });
           switchToHlsOnce("stalled");
+        } else if (video.currentTime < 0.5) {
+          trace("native.clock_stalled", { current_time: video.currentTime, ready_state: video.readyState });
+          switchToHlsOnce("clock_stalled");
         }
       }, 12000);
       if (autoPlay) activity.play("native_autoplay", true);

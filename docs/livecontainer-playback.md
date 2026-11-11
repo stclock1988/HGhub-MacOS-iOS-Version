@@ -199,3 +199,47 @@ Android 继续 `http://hg.localhost` + MSE。
 - 1.2.3 的改动：`api_play` 改走新 POST 接口，`streams.main`
   （无则 preview，再无则 hevc）映射回旧 `PlayInfo` 形状，前端
   不用改；并修了上面那个 scrub 字段名问题；版本 1.2.3。
+
+## 1.2.3 日志分析（2026-11-11 12:53，upload-15.txt，2534 行）
+
+- 两个 1.2.3 进程（pid 1526 04:46、pid 1569 04:52）：地址都拿到了
+  （`play.url` 的 `has_address: true`），原生挂载，`play.request`
+  （`native_autoplay`）正常，`media.play` 触发，`paused: false`，
+  `loadedmetadata` 时长正常，`loadeddata`/`canplay` 后
+  `buffered [[0, ~5]]`，`playing` 事件反复触发。
+- 但 `currentTime` 恒 0：5 秒一次的 heartbeat（04:46:44→04:46:54→…、
+  04:53:00→04:53:20）time 一直是 0（或 seek 后的 66.803、369.717）；
+  `readyState` 在 4↔2 之间抖；buffered 涨到 `[0, 101.6]` 后停滞
+  （`media.stalled`）；全程 `media_error: null`、`rate: 1`；
+  无 `play.rejected` / `play.blocked`，无 `native.failed`。
+- seek 本身工作：`currentTime` 跳到目标（228.043、369.717），
+  buffered 跟到目标附近，但之后还是不动；整个文件里一次
+  `web.seek.resumed` 都没有——seek 后
+  `requestVideoFrameCallback` 从未触发，即没有新帧被呈现出来。
+- Rust 一侧全部正常：pid 1526 的 141 条 `proxy.end` 全是 200
+  （无一条非 200），90 次 `segment_or_key`：key 16 字节、分片
+  475KB~4.2MB；9 次 playlist 全 200。本地复核：key 200/16 字
+  节，分片 0 用 key+IV 解密后是合法 MPEG-TS（0x47 同步、188 字
+  节对齐）；m3u8 是标准 VOD（165 集、总长 820.5s、有 ENDLIST）。
+  所以内容、网络、Rust 代理、本地 HTTP 服务器的取数都没有问题。
+- 结论：原生 AVFoundation 在这台 LiveContainer 里拿到了正确数据
+  却不走时钟。问题在原生引擎消费本地 HTTP 服务器数据这一环，
+  根因未定位（Range、keep-alive 等都只是猜测，日志里看不到
+  AVFoundation 的 HTTP 交互）。
+- 同份日志里的 1.2.18 进程（pid 1456）反证：hls.js +
+  ManagedMediaSource 在同一个 LiveContainer 里是正常播的——
+  3483 第 1 集 time 0→7.266 实时走，分片 0~4 各约 1.5s 加载完成。
+  后来卡在 316.638 是另一回事：seek 到 316 后分片 63 两次加载
+  都失败（`network.end`：`dns_error`、`transport_error`，最后
+  `proxy 502`），同时段其他图片请求也 `transport_error` /
+  `dns_error`——那是手机到 CDN 的网络通路当时断了（代理/DNS
+  层面），与引擎无关；网络恢复后 1.2.3 的原生仍卡住，说明原生
+  卡住不是网络问题。
+- 所以 1.2.1 建原生路线的假设（“hls.js + MMS 在 LiveContainer
+  里播不了”）被直接证据推翻：1.2.1 当时播放器根本没挂载
+  （无 `source.load`）是因为地址是空的（旧接口已废弃），不是
+  MMS 的问题。
+- 1.2.4 的改动：iOS 默认引擎改回 `hlsjs`（设置里仍可切原生）；
+  原生路径补一个时钟看门狗——12 秒定时器里除了 `readyState < 2`
+  之外，若 `readyState` 已够、未暂停、`currentTime` 仍 `< 0.5`
+  也切 hls.js（原来只看 `readyState`，冻结时它是 4，拦不住）。
