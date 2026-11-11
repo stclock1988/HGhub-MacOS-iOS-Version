@@ -39,7 +39,7 @@ const IMG_CACHE_MAX: usize = 240;
 const PL_CACHE_MAX: usize = 60;
 const KEY_CACHE_MAX: usize = 120;
 const SEG_CACHE_MAX: usize = 36;
-const SEG_CACHE_MAX_BYTES: usize = 4 * 1024 * 1024;
+const SEG_CACHE_MAX_BYTES: usize = 8 * 1024 * 1024; // 1.2.5：4MB 时 4.23MB 的分片永远进不了缓存，被并发拉了 3 次（1.2.4 日志）；8MB 盖住 5 秒高码率分片
 
 fn cache_put<V: Clone>(map: &Mutex<HashMap<String, V>>, key: String, val: V, max: usize) {
     let mut m = map.lock().unwrap();
