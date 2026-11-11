@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { api, cover, fmt, fmtTime, isMobile } from "../api";
+import { tracePlayback } from "../playbackDiagnostics";
 import type { Detail, Episode, Post, VideoCard } from "../types";
 import { useStore } from "../store";
 import { Avatar, Img, Sheet } from "./ui";
@@ -366,11 +367,14 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
     api.play(curId, curEp)
       .then((info) => {
         if (!alive) return;
+        // 1.2.1 的教训：play 接口 200 但 video_url 为空时，播放器根本不会
+        // 挂载，只剩封面，日志里却没有任何播放事件。把取地址的结果也记下来。
+        tracePlayback("play.url", { video_id: curId, episode: curEp, has_url: !!info?.video_url });
         if (!info?.video_url) throw new Error("暂无播放地址");
         setPlayUrls((m) => ({ ...m, [playKey]: info.video_url }));
         addHistory(curId, curEp);
       })
-      .catch((e) => { if (alive) setErr((e as Error).message || "取播放地址失败"); });
+      .catch((e) => { if (alive) { tracePlayback("play.failed", { video_id: curId, episode: curEp, message: (e as Error).message || "取播放地址失败" }); setErr((e as Error).message || "取播放地址失败"); } });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [curId, curEp]);
