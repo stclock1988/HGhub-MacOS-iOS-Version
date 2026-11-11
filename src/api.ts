@@ -37,6 +37,61 @@ export const cover = (url?: string, _w = 480) =>
 /** 播放列表：经本地协议改写分片地址，规避 CORS 与防盗链。 */
 export const playlist = (url: string) => `${LOCAL}/hls?u=${encodeURIComponent(url)}`;
 
+/* ── iOS 原生播放（绕开 WKWebView 的 hls.js + ManagedMediaSource + hg://） ──
+ *
+ * 根因见 docs/livecontainer-playback.md：iPhone 没有标准 MSE，只有
+ * ManagedMediaSource，且它对本地加载的 WKWebView 页面受限不可靠；
+ * LiveContainer 访客跑在宿主身份下更糟；而 <video> 的加载走
+ * AVFoundation，根本不经过 WKURLSchemeHandler，所以 video.src 挂
+ * hg:// 地址的原生回退永远播不出来。
+ *
+ * 新路：Rust 在本机 127.0.0.1 起一个随机端口的 HTTP 媒体服务器
+ * （media_server.rs，复用同一份 media::handle），iOS 用原生
+ * AVFoundation 直接播 http://127.0.0.1:<port>/hls?u=…。Referer/UA、
+ * AES Key 改写与缓存都在 Rust 侧，和原来 hg:// 完全一致。
+ * 服务器没起来（非 iOS / 绑定失败）时返回 null，播放器回退 hls.js。 */
+
+export type PlaybackEngine = "native" | "hlsjs";
+const ENGINE_KEY = "hghub.playbackEngine.v1";
+export function getPlaybackEngine(): PlaybackEngine {
+  try {
+    const saved = localStorage.getItem(ENGINE_KEY);
+    if (saved === "native" || saved === "hlsjs") return saved;
+  } catch { /* ignore */ }
+  return isIos ? "native" : "hlsjs";
+}
+export function setPlaybackEngine(engine: PlaybackEngine) {
+  try { localStorage.setItem(ENGINE_KEY, engine); } catch { /* ignore */ }
+}
+
+/** 系统原生 HLS（AVFoundation）是否能播 m3u8：iOS/iPadOS/macOS 返回真。 */
+export function canPlayNativeHls(): boolean {
+  try {
+    const v = document.createElement("video");
+    const can = v.canPlayType("application/vnd.apple.mpegurl");
+    return can === "probably" || can === "maybe";
+  } catch { return false; }
+}
+
+let mediaPortPromise: Promise<number | null> | null = null;
+/** 本机媒体服务器端口（应用生命周期内不变）；未启动时为 null。 */
+export function mediaServerPort(): Promise<number | null> {
+  if (!mediaPortPromise) {
+    mediaPortPromise = invoke<number | null>("media_server_port").catch(() => null);
+  }
+  return mediaPortPromise;
+}
+
+/** 把播放地址换成本机 HTTP 地址（原生播放器用）；服务器未起返回 null。 */
+export async function nativePlaybackUrl(src: string): Promise<string | null> {
+  const port = await mediaServerPort();
+  if (!port) return null;
+  const origin = `http://127.0.0.1:${port}`;
+  if (src.startsWith(`${LOCAL}/`)) return origin + src.slice(LOCAL.length);
+  if (/\.m3u8(\?|$)/i.test(src)) return `${origin}/hls?u=${encodeURIComponent(src)}`;
+  return `${origin}/seg?u=${encodeURIComponent(src)}`;
+}
+
 /* ── 调用封装 ───────────────────────────────────────────── */
 
 /** 写一行到应用数据目录 debug.log（用户反馈「打不开」时要的就是它） */
