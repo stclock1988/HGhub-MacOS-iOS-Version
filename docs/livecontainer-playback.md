@@ -162,3 +162,40 @@ Android 继续 `http://hg.localhost` + MSE。
   地址记 `play.url`（`has_url`）与 `play.failed`；原生启动前记
   `native.waiting`；`media_server_port` 桥接调用 5 秒超时（超时按服
   务未启动处理，回退 hls.js，不再无限等）。
+
+## 1.2.2 真机日志结论（2026-11-11，Han 传的第二份日志，含 4 个进程）
+
+- 1.2.2 的两轮（pid 1488 / 1492）：本机媒体服务器正常启动
+  （`media_server.start` 端口 55557 / 55628，`web.media.server`
+  一致）；`play` 接口 4 次全部 200 + `business_status: 1`；
+  但 `play.url` 之后同一毫秒立刻跟 `play.failed`，且没有任何
+  `source.load` / `native.waiting`——说明 `api.play` 正常返回，
+  但 `info.video_url` 是空的，走到 `throw "暂无播放地址"`。
+- 1.2.2 诊断本身有个坑：`playback_log.rs` 的 `scrub()` 会丢掉键名
+  含 `url` / `message` 的字段，所以 `play.url` 的 `has_url` 与
+  `play.failed` 的 `message` 都没进磁盘。1.2.3 改成
+  `has_address` / `detail`。
+- 同份日志里还有个 1.2.18 进程（pid 1456）：视频 3483 第 1 集正常
+  挂载播放器（`web.play.resolve`，`resolved: true`，主机
+  `yd-lphu-long.hzjvlo.cn`，`paused: false`），且日志里没有任何
+  `play` 接口调用——它的地址来自三次 POST `video` 请求之一，
+  即新播放接口。
+
+## 根因（2026-11-11 已验证）：上游废弃了旧播放接口
+
+本机实测（游客、无登录，两条线路都一样）：
+
+- `GET /api/videos/{id}/play?ep=&page_texts=0`（旧）：
+  `status: 1`，但 `video_url` / `video_url_hevc` / `video_api` /
+  `video_key` / `video_iv` / `media_id` 全是空串。视频 12、117、
+  3483（第 1、3 集）都一样。详情与列表同样不带地址。所以跟
+  播放器、媒体服务器、LiveContainer 全无关——根本没有地址可播。
+- 官网视频页 HTML 里公布的路由表有新接口：
+  `POST /api/videos/:id/episodes/:ep/playback`。
+  实测返回 `data.streams.main`（m3u8，主机正是 1.2.18 日志里的
+  `yd-lphu-long.hzjvlo.cn`，`auth_key` 约 1 小时有效），另有
+  `streams.preview` / `streams.hevc` 与 `cdn` 鉴权信息；该 m3u8
+  直接拉取正常（`#EXTM3U`，AES-128，`tp6.drleao.cn` 分片）。
+- 1.2.3 的改动：`api_play` 改走新 POST 接口，`streams.main`
+  （无则 preview，再无则 hevc）映射回旧 `PlayInfo` 形状，前端
+  不用改；并修了上面那个 scrub 字段名问题；版本 1.2.3。

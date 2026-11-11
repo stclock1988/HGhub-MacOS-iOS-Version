@@ -369,12 +369,14 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
         if (!alive) return;
         // 1.2.1 的教训：play 接口 200 但 video_url 为空时，播放器根本不会
         // 挂载，只剩封面，日志里却没有任何播放事件。把取地址的结果也记下来。
-        tracePlayback("play.url", { video_id: curId, episode: curEp, has_url: !!info?.video_url });
+        // 注意：诊断日志的 scrub 会丢掉键名含 url / message 的字段，
+        // 所以这里用 has_address / detail，不用 has_url / message。
+        tracePlayback("play.url", { video_id: curId, episode: curEp, has_address: !!info?.video_url });
         if (!info?.video_url) throw new Error("暂无播放地址");
         setPlayUrls((m) => ({ ...m, [playKey]: info.video_url }));
         addHistory(curId, curEp);
       })
-      .catch((e) => { if (alive) { tracePlayback("play.failed", { video_id: curId, episode: curEp, message: (e as Error).message || "取播放地址失败" }); setErr((e as Error).message || "取播放地址失败"); } });
+      .catch((e) => { if (alive) { tracePlayback("play.failed", { video_id: curId, episode: curEp, detail: (e as Error).message || "取播放地址失败" }); setErr((e as Error).message || "取播放地址失败"); } });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [curId, curEp]);
