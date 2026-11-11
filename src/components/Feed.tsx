@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { api, cover, fmt, fmtTime, isMobile } from "../api";
+import { api, cover, fmt, fmtTime, isIos, isMobile } from "../api";
 import { tracePlayback } from "../playbackDiagnostics";
 import type { Detail, Episode, Post, VideoCard } from "../types";
 import { useStore } from "../store";
@@ -457,6 +457,11 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
   }, []);
 
   const toggleFull = () => {
+    // iOS 上先试系统播放器全屏（webkitEnterFullscreen）：把呈现交给
+    // 系统 AVPlayer 层。1.2.6 证实 WKWebView 的视频层在 LiveContainer
+    // 里几乎不呈现帧（36 秒只呈现 3 帧），系统播放器是绕过它的路径。
+    // 不可用时再走原来的 DOM 全屏。
+    if (isIos && videoRef.current?.systemFullscreen()) return;
     const el = boxRef.current?.parentElement;
     if (!el) return;
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});

@@ -185,7 +185,7 @@ export function usePlayerDiagnostics(videoRef: RefObject<HTMLVideoElement | null
       }
       if (e.type === "playing" && !v.requestVideoFrameCallback) finish("playing");
     };
-    const events = ["loadstart", "loadedmetadata", "loadeddata", "play", "pause", "playing", "waiting", "stalled", "seeking", "seeked", "ended", "error", "emptied", "abort", "ratechange", "volumechange", "canplay"];
+    const events = ["loadstart", "loadedmetadata", "loadeddata", "play", "pause", "playing", "waiting", "stalled", "seeking", "seeked", "ended", "error", "emptied", "abort", "ratechange", "volumechange", "canplay", "webkitpresentationmodechanged"];
     events.forEach(event => v.addEventListener(event, onEvent));
     const stateChange = () => { if (playbackLogEnabled()) emit("player.snapshot"); else pending.current = null; };
     const unsubscribe = subscribe(stateChange);

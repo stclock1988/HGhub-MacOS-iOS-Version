@@ -15,6 +15,9 @@ export type VideoHandle = {
   mute: (m: boolean) => void;
   volume: (v: number) => void;
   reload: () => void;
+  /** 系统播放器全屏（iOS webkitEnterFullscreen）：把呈现交给系统
+   *  AVPlayer 层，而不是 WKWebView 的合成器。返回 true 表示已尝试。 */
+  systemFullscreen: () => boolean;
 };
 
 type Props = {
@@ -132,6 +135,23 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
     rate: (r: number) => { const v = videoRef.current; if (v) v.playbackRate = r; },
     mute: (m: boolean) => { const v = videoRef.current; if (v) v.muted = m; },
     volume: (vol: number) => { const v = videoRef.current; if (v) v.volume = vol; },
+    systemFullscreen: () => {
+      const v = videoRef.current;
+      if (!v) return false;
+      const webkit = v as unknown as { webkitEnterFullscreen?: () => void; webkitExitFullscreen?: () => void; webkitSetPresentationMode?: (m: string) => void; webkitPresentationMode?: string };
+      const mode = webkit.webkitPresentationMode ?? null;
+      trace("video.sys_fullscreen", { mode, has_enter: typeof webkit.webkitEnterFullscreen === "function", has_set_mode: typeof webkit.webkitSetPresentationMode === "function" });
+      try {
+        if (mode === "fullscreen") {
+          if (typeof webkit.webkitExitFullscreen === "function") webkit.webkitExitFullscreen();
+          else if (typeof webkit.webkitSetPresentationMode === "function") webkit.webkitSetPresentationMode("inline");
+          return true;
+        }
+        if (typeof webkit.webkitEnterFullscreen === "function") { webkit.webkitEnterFullscreen(); return true; }
+        if (typeof webkit.webkitSetPresentationMode === "function") { webkit.webkitSetPresentationMode("fullscreen"); return true; }
+      } catch { /* 系统播放器不可用时走 CSS 全屏兜底 */ }
+      return false;
+    },
     reload: () => {
       const v = videoRef.current;
       if (!v) return;

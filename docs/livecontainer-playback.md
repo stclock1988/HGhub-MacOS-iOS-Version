@@ -288,3 +288,29 @@ Android 继续 `http://hg.localhost` + MSE。
   没呈现）；② 候选修复：不缩放时去掉视频元素的 `translateZ(0)`
   强制合成层（在 LiveContainer 的 WKWebView 里它可能让视频层一直
   显示旧帧；缩放手势时仍用 translate3d）。版本 1.2.6。
+
+## 1.2.6 诊断定性：画面真没呈现（2026-11-11 14:00，upload-18.txt，pid 1770）
+
+- 帧计数是决定性的：36 秒“播放”只呈现了 **3 帧**（0→2 帧，拖动后
+  又呈现 1 帧到 50.867，之后再没涨过）。30fps 的视频 36 秒本该
+  呈现约 1000 帧。画面不动不是被遮住、不是海报盖着——视频元素
+  本身几乎不呈现帧。去 `translateZ(0)` 的候选修复没生效。
+- 声音也确认了：心跳里视频元素自己的 `muted` 在 06:00:16 翻成
+  false（Han 确实点了取消静音），还是没声音。所以音画两路呈现
+  都死了，只剩 MSE 的解码/时钟在跑。
+- 同一个 log 里另有一个独立问题：这次网络又变差了，分片 7 次
+  451ms~16.3 秒、1 次 transport_error、3 次 bufferStalledError，
+  时钟 10 秒只爬 0.5 秒、缓冲只剩 5 秒、ready 掉到 2~3。这是
+  代理/CDN 通路的波动（1.2.5 测时最慢才 0.86 秒），与呈现问题
+  是两回事，不要混在一起。
+- 结论：WKWebView 的 `<video>` 在 LiveContainer 里呈现死掉
+  （解码/缓冲/时钟正常，帧和声音都出不来）；seek 能呈现一帧，
+  只是合成器被强制渲染了一次。原生 AVFoundation 路径 1.2.3
+  时钟冻在 0 也与此一致——AVFoundation 的时钟由呈现驱动。
+- 1.2.7 的改动：全屏按钮先试系统播放器全屏
+  （`webkitEnterFullscreen`，有则用，没有则
+  `webkitSetPresentationMode("fullscreen")`），把呈现交给系统
+  AVPlayer 层，绕开 WKWebView 的合成器；不可用时回落到原来的
+  DOM 全屏。诊断加 `webkitpresentationmodechanged` 事件。版本
+  1.2.7。点全屏后如果画面动起来、有声音了，就说明系统播放器
+  这条路通；如果还是不动，下一步是 Tauri 的原生 AVPlayer 插件。
