@@ -4,6 +4,7 @@ mod logging;
 #[cfg(target_os = "macos")]
 mod macos_titlebar;
 mod media;
+mod media_server;
 mod net;
 mod network_policy;
 mod playback_log;
@@ -64,6 +65,12 @@ pub fn run() {
             // macOS 主窗口在此创建：先按系统红绿灯尺寸算出居中位置（见 macos_titlebar.rs）
             #[cfg(target_os = "macos")]
             macos_titlebar::create_main_window(app)?;
+            // iOS 原生播放走本机媒体 HTTP 服务器（见 media_server.rs）：
+            // AVFoundation 只认 http(s) 地址，用它绕开 WKWebView 的
+            // hls.js + ManagedMediaSource + hg:// 自定义协议链路。
+            // 绑定失败也不影响启动，前端会回退到 hls.js。
+            #[cfg(target_os = "ios")]
+            tauri::async_runtime::spawn(crate::media_server::run());
             Ok(())
         })
         .plugin(
@@ -132,6 +139,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             api::app_boot,
+            media_server::media_server_port,
             playback_log::playback_log_status,
             playback_log::playback_log_set,
             playback_log::playback_log_write,

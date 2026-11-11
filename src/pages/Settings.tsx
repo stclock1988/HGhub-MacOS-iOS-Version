@@ -1,10 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { api, APP_VERSION, hostOf, logLine, platform, type UpdateInfo } from "../api";
+import { api, APP_VERSION, canPlayNativeHls, getPlaybackEngine, hostOf, logLine, platform, setPlaybackEngine, type PlaybackEngine, type UpdateInfo } from "../api";
 import { useStore } from "../store";
 import { Modal, Toggle } from "../components/ui";
 import LinePicker from "../components/LinePicker";
 import { copyPlaybackLog, initPlaybackLog, setPlaybackLog, usePlaybackLog } from "../playbackDiagnostics";
-import { IBack, IBoltF, IBroom, IChevR, IHeart, IInfo, ILink, ILockF, IMoon, IRefresh, ISettings, ISun, IVolMute } from "../icons";
+import { IBack, IBoltF, IBroom, IChevR, IHeart, IInfo, ILink, ILockF, IMoon, IPlayF, IRefresh, ISettings, ISun, IVolMute } from "../icons";
 
 /* 独立设置页：线路 / 外观 / 播放 / 本地数据 / 清理缓存 / 网络诊断 / 关于
    入口：Windows 侧栏「设置」、Android「我的」右上角齿轮 */
@@ -19,6 +19,12 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const playbackLog = usePlaybackLog();
   const [copyingLog, setCopyingLog] = useState(false);
+  const [engine, setEngineState] = useState<PlaybackEngine>(() => getPlaybackEngine());
+  const switchEngine = (next: PlaybackEngine) => {
+    setPlaybackEngine(next);
+    setEngineState(next);
+    toast(next === "native" ? "已切原生播放，下个视频生效" : "已切网页播放，下个视频生效", "ok");
+  };
 
   const readLine = () => {
     api.lineState().then((s) => setLineBase(s.base)).catch(() => {});
@@ -86,6 +92,23 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
               </div>
               <Toggle on={muteOnStartup} onChange={setMuteOnStartup} label="启动时静音" />
             </div>
+            {platform === "ios" && (
+              <div className="flex items-center gap-3 px-3.5 py-3">
+                <span className="w-8 h-8 rounded-full bg-s3 flex items-center justify-center text-primary"><IPlayF size={16} /></span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[12.5px] text-on">播放引擎</div>
+                  <div className="text-[10.5px] text-mut">原生走系统播放器 + 本机代理，LiveContainer 无法播放时用它；网页用 hls.js。{canPlayNativeHls() ? "" : "（本机不支持原生 HLS）"}</div>
+                </div>
+                <div className="flex rounded-full bg-s3 p-0.5 shrink-0">
+                  {(["native", "hlsjs"] as const).map((e) => (
+                    <button key={e} onClick={() => switchEngine(e)}
+                      className={`px-2.5 py-1 rounded-full text-[11px] pressable ${engine === e ? "bg-pc text-on-pc" : "text-mut"}`}>
+                      {e === "native" ? "原生" : "网页"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </Section>
 
           <Section title="本地数据">

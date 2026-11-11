@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
-import { fmtTime, platform, playlist } from "../api";
+import { canPlayNativeHls, fmtTime, getPlaybackEngine, nativePlaybackUrl, platform, playlist } from "../api";
 import { mediaResource, observeHls, usePlayerDiagnostics } from "../playbackDiagnostics";
 import { usePlaybackActivity } from "../usePlaybackActivity";
 import { useSeekInput } from "../useSeekInput";
@@ -60,14 +60,29 @@ export default function Player({
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !src) return;
+    // 原生 / hls.js 切换用的代次守卫与失败标记（切集后旧的异步回调一律作废）。
+    let cancelled = false;
+    let nativeFailed = false;
+    let fallbackTimer: number | null = null;
+    let nativeErrorHandler: (() => void) | null = null;
     const url = playlist(src);
     recoverCountRef.current = 0;
     setErrMsg("");
-    trace("source.load", { engine: Hls.isSupported() ? "hls.js" : "native", auto_play: autoPlay });
+    // iOS 默认走原生：AVFoundation + 本机 HTTP 服务器，绕开 WKWebView 的
+    // hls.js + ManagedMediaSource + hg:// 链路（LiveContainer 下那条路
+    // 不可用，见 docs/livecontainer-playback.md）。设置里可切回 hls.js。
+    const wantNative =
+      platform === "ios" && getPlaybackEngine() === "native" && canPlayNativeHls();
 
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
 
+    // --- hls.js 路径（macOS / 安卓 / iOS 原生失败后的回退） ---
+    const startHls = () => {
+      if (cancelled) return;
+      trace("source.load", { engine: Hls.isSupported() ? "hls.js" : "native-direct", auto_play: autoPlay });
     if (Hls.isSupported()) {
+      // ManagedMediaSource 要求关掉远程播放，否则 iOS 上建源会直接失败。
+      if (platform === "ios") { try { video.disableRemotePlayback = true; } catch { /* ignore */ } }
       const hls = new Hls({
         // 禁用从插播/内容引导 JSON 派生直连 URL 的可选功能。
         interstitialsController: undefined,
@@ -131,13 +146,67 @@ export default function Player({
         else { hls.destroy(); hlsRef.current = null; }
       });
     } else {
-      // Safari / 部分 WebView 原生支持 HLS
-      video.src = url;
+      // 之前这里是 video.src = hg://…：AVFoundation 的加载根本不经过
+      // WKURLSchemeHandler，挂自定义协议地址永远播不出来。改走本机
+      // HTTP 服务器；服务器没起来就报出来，而不是挂一个死地址。
+      void nativePlaybackUrl(src).then((nativeUrl) => {
+        if (cancelled) return;
+        if (!nativeUrl) {
+          setErrMsg("本地媒体服务未启动，无法播放");
+          return;
+        }
+        if (nativeFailed) {
+          setErrMsg("原生播放失败，且该片源不支持网页播放");
+          return;
+        }
+        video.src = nativeUrl;
+        if (autoPlay) activity.play("native_autoplay", true);
+      });
+    }
+    }
+
+    // --- iOS 原生路径：AVFoundation + 本机 HTTP 服务器 ---
+    const switchToHlsOnce = (reason: string) => {
+      if (cancelled || nativeFailed) return;
+      nativeFailed = true;
+      if (nativeErrorHandler) video.removeEventListener("error", nativeErrorHandler);
+      if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
+      trace("native.fallback", { reason });
+      video.removeAttribute("src");
+      try { video.load(); } catch { /* ignore */ }
+      startHls();
+    }
+    const startNative = async () => {
+      const nativeUrl = await nativePlaybackUrl(src);
+      if (cancelled) return;
+      if (!nativeUrl) { startHls(); return; }
+      trace("source.load", { engine: "native", auto_play: autoPlay });
+      video.src = nativeUrl;
+      video.load();
+      nativeErrorHandler = () => {
+        trace("native.failed", { error_code: video.error?.code ?? null });
+        switchToHlsOnce("error");
+      };
+      video.addEventListener("error", nativeErrorHandler);
+      // 原生 12 秒仍无数据（readyState < 2）且页面还在前台：切 hls.js。
+      fallbackTimer = window.setTimeout(() => {
+        if (cancelled || nativeFailed) return;
+        if (video.readyState < 2 && activity.isActive()) {
+          trace("native.stalled", { ready_state: video.readyState });
+          switchToHlsOnce("stalled");
+        }
+      }, 12000);
       if (autoPlay) activity.play("native_autoplay", true);
     }
 
+    if (wantNative) void startNative();
+    else startHls();
+
     return () => {
+      cancelled = true;
       trace("source.cleanup");
+      if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
+      if (nativeErrorHandler) video.removeEventListener("error", nativeErrorHandler);
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
     };
   }, [src, autoPlay]);

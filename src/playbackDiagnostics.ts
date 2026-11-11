@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useSyncExternalStore, type RefObject } from "react";
 import Hls from "hls.js";
 import type { FragBufferedData, FragLoadedData, FragLoadingData } from "hls.js";
+import { canPlayNativeHls, mediaServerPort } from "./api";
 
 type Data = Record<string, unknown>;
 type Status = { enabled: boolean; path: string | null; error: string | null };
@@ -55,7 +56,9 @@ export async function flushPlaybackLog() {
 export function initPlaybackLog() {
   return init ??= playbackLogApi.status().then(saved => {
     publish({ ...saved, ready: true });
-    tracePlayback("app.start", { version: __APP_VERSION__, platform: navigator.platform, user_agent: navigator.userAgent, hls_version: Hls.version, media_source: !!window.MediaSource, managed_media_source: "ManagedMediaSource" in window });
+    tracePlayback("app.start", { version: __APP_VERSION__, platform: navigator.platform, user_agent: navigator.userAgent, hls_version: Hls.version, media_source: !!window.MediaSource, managed_media_source: "ManagedMediaSource" in window, native_hls: canPlayNativeHls() });
+    // 本机媒体服务器端口（iOS 原生播放用）：解析是异步的，单独记一条。
+    void mediaServerPort().then(port => tracePlayback("media.server", { media_http_port: port }));
   }).catch(() => { init = undefined; publish({ error: "无法读取诊断日志设置" }); });
 }
 
@@ -66,7 +69,7 @@ export async function setPlaybackLog(on: boolean) {
     await flushPlaybackLog();
     const saved = await playbackLogApi.set(on);
     publish({ ...saved, pending: false });
-    tracePlayback("app.snapshot", { version: __APP_VERSION__, platform: navigator.platform, user_agent: navigator.userAgent, hls_version: Hls.version, media_source: !!window.MediaSource, managed_media_source: "ManagedMediaSource" in window });
+    tracePlayback("app.snapshot", { version: __APP_VERSION__, platform: navigator.platform, user_agent: navigator.userAgent, hls_version: Hls.version, media_source: !!window.MediaSource, managed_media_source: "ManagedMediaSource" in window, native_hls: canPlayNativeHls() });
   } finally { if (state.pending) publish({ pending: false }); }
 }
 
