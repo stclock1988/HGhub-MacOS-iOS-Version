@@ -52,6 +52,10 @@ pub fn run() {
                 .open_js_links_on_click(false)
                 .build(),
         )
+        // 1.2.10：原生 AVPlayer 插件（iOS）。前端用
+        // invoke("plugin:native-player|play", { url }) 调用，见
+        // src-tauri/plugins/tauri-plugin-native-player。
+        .plugin(tauri_plugin_native_player::init())
         .manage(Api::new())
         .setup(|app| {
             if let Ok(dir) = app.path().app_data_dir() {
