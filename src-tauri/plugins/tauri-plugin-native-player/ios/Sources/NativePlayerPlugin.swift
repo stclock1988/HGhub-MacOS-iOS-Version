@@ -13,6 +13,15 @@
 // The `play` command resolves when the player is dismissed, with the
 // position (seconds) where playback stopped, so the inline player can
 // jump back to that point (staying paused).
+//
+// Dismissal is noticed via UIAdaptivePresentationControllerDelegate's
+// presentationControllerDidDismiss (fires for the Done button and for a
+// swipe, and only on a real dismissal — not when a route picker merely
+// covers the player). The AVPlayerViewControllerDelegate dismissal
+// callbacks (playerViewControllerWill/DidEndDismissalTransition) are
+// marked @available(iOS, unavailable) in the iOS 26 SDK, so they cannot
+// be implemented at all — compiling them fails the build (2026-11-11,
+// 1.2.10 CI).
 
 import AVKit
 import Foundation
@@ -26,7 +35,7 @@ struct PlayArgs: Decodable {
   let url: String
 }
 
-class NativePlayerPlugin: Plugin, AVPlayerViewControllerDelegate {
+class NativePlayerPlugin: Plugin, UIAdaptivePresentationControllerDelegate {
   private var player: AVPlayer?
   private var playerVC: AVPlayerViewController?
   private var pendingInvoke: Invoke?
@@ -68,7 +77,6 @@ class NativePlayerPlugin: Plugin, AVPlayerViewControllerDelegate {
     let player = AVPlayer(url: url)
     let vc = AVPlayerViewController()
     vc.player = player
-    vc.delegate = self
     vc.showsPlaybackControls = true
     // v1: no Picture in Picture. Its lifecycle adds a second dismissal
     // path (player keeps playing after the sheet goes away); the Done
@@ -77,14 +85,17 @@ class NativePlayerPlugin: Plugin, AVPlayerViewControllerDelegate {
     vc.entersFullScreenWhenPlaybackBegins = false
     self.player = player
     self.playerVC = vc
-    presenter.present(vc, animated: true) {
+    presenter.present(vc, animated: true) { [weak self] in
+      // The presentation controller exists once presentation completes;
+      // this is what reports the Done-button / swipe dismissal.
+      vc.presentationController?.delegate = self
       player.play()
     }
   }
 
-  // MARK: - AVPlayerViewControllerDelegate
+  // MARK: - UIAdaptivePresentationControllerDelegate
 
-  func playerViewControllerDidEndDismissalTransition(_ playerViewController: AVPlayerViewController) {
+  func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
     finish(position: currentPosition())
   }
 

@@ -386,9 +386,16 @@ Android 继续 `http://hg.localhost` + MSE。
 - Swift 呈现：`manager.viewController?.present(AVPlayerViewController,
   animated: true)`，播 `http://127.0.0.1:<port>/hls?u=<m3u8>`（本机媒
   体服务器，分片/key 全走本地代理，AVPlayer 不用直连 CDN）。关闭时
-  （Done/下滑，`playerViewControllerDidEndDismissalTransition`）先
-  `pause()` 再 `invoke.resolve(["position": <秒>])`；Rust 的 `play`
+  先 `pause()` 再 `invoke.resolve(["position": <秒>])`；Rust 的 `play`
   命令在 `spawn_blocking` 里等这个结果（不占 tokio 工作线程）。
+- **1.2.10 的 CI 失败**（2026-11-11，Han 贴的日志）：初版用
+  `AVPlayerViewControllerDelegate` 的
+  `playerViewControllerDidEndDismissalTransition` 接关闭信号，但 iOS
+  26 SDK（Xcode 26.6）里该方法标了 `@available(iOS, unavailable)`，编
+  译直接报错（NativePlayerPlugin.swift:87），`cargo build` 101、没有
+  产出 .app，workflow 掉进兜底 xcodebuild 又报
+  `cli-options-server.json` 不存在（兜底本就跑不通，是第二道失败，不
+  是根因）。见 1.2.11。
 - v1 限制：画中画关掉了（`allowsPictureInPicturePlayback = false`，
   它的生命周期会多一条 dismissal 路径）；同一时间只开一个原生播放器，
   第二次点“全屏”会拒绝（already playing）；关闭时内联播放器跳回关
@@ -406,3 +413,29 @@ Android 继续 `http://hg.localhost` + MSE。
 - 验证：装 v1.2.10-ios，点开视频后直接点右侧操作栏的“全屏”，看原生
   播放器里画面动不动、有没有声音；再点 Done 回来，确认内联播放器
   回到了关闭点的进度（暂停）。
+
+## 1.2.11：修复原生插件的关闭信号（2026-11-11，待 Han 测）
+
+- 根因：1.2.10 用 `AVPlayerViewControllerDelegate` 的
+  `playerViewControllerDidEndDismissalTransition` 接 Done/下滑关闭，
+  但 iOS 26 SDK 把它标成 `@available(iOS, unavailable)`，Swift 编译
+  报错，CI 的 `cargo build`（aarch64-apple-ios）101 失败、没产出
+  .app，workflow 掉进兜底 xcodebuild（必然报 `cli-options-server.json`
+  不存在）。`|| true` 把第一道报错吞了，贴出来的尾部不是根因。
+- 改法：删掉 `AVPlayerViewControllerDelegate` 遵从与该方法，改走
+  `UIAdaptivePresentationControllerDelegate` 的
+  `presentationControllerDidDismiss`（Done 和下滑都会触发，且只在真
+  正关闭时触发——音量/投屏路由选择器只是盖在上面，不会误触发）；
+  delegate 在 `present` 完成的回调里设
+  （`vc.presentationController?.delegate = self`）。其余不动（呈现、
+  画中画关、单例、回到关闭点进度）。
+- 本地排除过：插件 build.rs + 权限生成在隔离工程里完整通过
+  （`allow-play`/`deny-play` 自动生成、`default` 集有效）；Swift 逐
+  项对照 Tauri 2.12.5 的 iOS API 源码（Plugin: NSObject、
+  manager.viewController、Invoke、JsonObject）；iOS-target Rust 与
+  Xcode/Swift 集成只能以 CI 为准。
+- 验证：装 v1.2.11-ios，点开视频后直接点右侧操作栏的“全屏”，看原生
+  播放器里画面动不动、有没有声音；再点 Done 回来，确认内联播放器
+  回到了关闭点的进度（暂停）。若 Done 后内联没有反应（一直卡住），
+  说明 `presentationControllerDidDismiss` 没触发——那时再换
+  `viewDidDisappear` 兜底。
