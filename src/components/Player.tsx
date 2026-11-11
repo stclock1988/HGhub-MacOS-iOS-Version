@@ -243,6 +243,26 @@ export default function Player({
   };
 
   const toggleFull = () => {
+    // 1.2.8：与 Feed 的全屏按钮一致——iOS 上先试系统播放器全屏
+    // （webkitEnterFullscreen），把呈现交给系统 AVPlayer 层，绕开
+    // WKWebView 在 LiveContainer 里几乎不呈现帧的合成器。先记一笔
+    // fullscreen_tap，分清“没点到按钮”还是“系统路径没跑起来”。
+    const v = videoRef.current;
+    trace("video.fullscreen_tap", { ios: platform === "ios", view: "post_detail" });
+    if (platform === "ios" && v) {
+      const webkit = v as unknown as { webkitEnterFullscreen?: () => void; webkitExitFullscreen?: () => void; webkitSetPresentationMode?: (m: string) => void; webkitPresentationMode?: string };
+      const mode = webkit.webkitPresentationMode ?? null;
+      trace("video.sys_fullscreen", { mode, has_enter: typeof webkit.webkitEnterFullscreen === "function", has_set_mode: typeof webkit.webkitSetPresentationMode === "function" });
+      try {
+        if (mode === "fullscreen") {
+          if (typeof webkit.webkitExitFullscreen === "function") webkit.webkitExitFullscreen();
+          else if (typeof webkit.webkitSetPresentationMode === "function") webkit.webkitSetPresentationMode("inline");
+          return;
+        }
+        if (typeof webkit.webkitEnterFullscreen === "function") { webkit.webkitEnterFullscreen(); return; }
+        if (typeof webkit.webkitSetPresentationMode === "function") { webkit.webkitSetPresentationMode("fullscreen"); return; }
+      } catch { /* 系统播放器不可用时走 DOM 全屏兜底 */ }
+    }
     const el = wrapRef.current;
     if (!el) return;
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});

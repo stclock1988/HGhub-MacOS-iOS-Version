@@ -457,6 +457,10 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
   }, []);
 
   const toggleFull = () => {
+    // 1.2.8 诊断：先记一笔“点到了全屏按钮”，再走系统播放器——
+    // 1.2.7 两份日志里都没有 video.sys_fullscreen，要分清是“没点
+    // 到按钮”还是“点了但系统路径没跑起来”。
+    videoRef.current?.trace("video.fullscreen_tap", { ios: isIos });
     // iOS 上先试系统播放器全屏（webkitEnterFullscreen）：把呈现交给
     // 系统 AVPlayer 层。1.2.6 证实 WKWebView 的视频层在 LiveContainer
     // 里几乎不呈现帧（36 秒只呈现 3 帧），系统播放器是绕过它的路径。
