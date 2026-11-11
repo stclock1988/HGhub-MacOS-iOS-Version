@@ -323,6 +323,9 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
       startHls();
     }
     const startNative = async () => {
+      // native.waiting：等取端口期间若一直没下文（无 source.load、无
+      // native.failed），说明这步卡住了——这正是 1.2.1 日志里的死状。
+      trace("native.waiting");
       const nativeUrl = await nativePlaybackUrl(src);
       if (cancelled) return;
       if (!nativeUrl) { startHls(); return; }

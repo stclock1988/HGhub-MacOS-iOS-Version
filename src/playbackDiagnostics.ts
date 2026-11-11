@@ -70,6 +70,9 @@ export async function setPlaybackLog(on: boolean) {
     const saved = await playbackLogApi.set(on);
     publish({ ...saved, pending: false });
     tracePlayback("app.snapshot", { version: __APP_VERSION__, platform: navigator.platform, user_agent: navigator.userAgent, hls_version: Hls.version, media_source: !!window.MediaSource, managed_media_source: "ManagedMediaSource" in window, native_hls: canPlayNativeHls() });
+    // 1.2.1 的教训：media.server 只在启动时记一条，日志若是启动后才打开，
+    // 那条就丢了，无法判断本机服务器起没起来。开日志时也补记一条。
+    void mediaServerPort().then(port => tracePlayback("media.server", { media_http_port: port }));
   } finally { if (state.pending) publish({ pending: false }); }
 }
 

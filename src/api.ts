@@ -74,10 +74,17 @@ export function canPlayNativeHls(): boolean {
 }
 
 let mediaPortPromise: Promise<number | null> | null = null;
-/** 本机媒体服务器端口（应用生命周期内不变）；未启动时为 null。 */
+/** 本机媒体服务器端口（应用生命周期内不变）；未启动时为 null。
+ * 桥接调用加 5 秒超时：调用一旦挂住（1.2.1 日志里出现过无 source.load、
+ * 无任何错误的静默卡死），播放不能无限等下去，超时按服务未启动处理，
+ * 前端回退 hls.js。 */
 export function mediaServerPort(): Promise<number | null> {
   if (!mediaPortPromise) {
-    mediaPortPromise = invoke<number | null>("media_server_port").catch(() => null);
+    const timeout = new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 5000));
+    mediaPortPromise = Promise.race([
+      invoke<number | null>("media_server_port").catch(() => null),
+      timeout,
+    ]);
   }
   return mediaPortPromise;
 }
