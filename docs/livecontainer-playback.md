@@ -351,3 +351,58 @@ Android 继续 `http://hg.localhost` + MSE。
   （via: "enterFs"），再试 `systemFullscreen()`（系统播放器接管
   了就不再开 CSS 全屏）；不可用时回落到原来的 CSS 全屏 + 方向
   锁定。版本 1.2.9。点右侧操作栏的“全屏”就会走系统播放器。
+
+## 1.2.9 验证：系统播放器也救不了（2026-11-11 14:40，日志 + 截图）
+
+- Han 装 1.2.9 后点右侧操作栏的“全屏”，日志（upload-21.txt，pid 1866）
+  确认系统播放器确实打开了：06:39:18 `video.fullscreen_tap`（via:
+  "enterFs"）→ `video.sys_fullscreen`（mode inline、has_enter true）→
+  `webkitpresentationmodechanged`；约 72 秒后第二次
+  `webkitpresentationmodechanged`（06:40:30）退出。截图是系统播放器
+  界面（X、画中画、音量、±10 秒、暂停、0:33/-2:55），画面是真实剧集
+  内容。
+- 但 Han 14:41 回“还是画面静止不动，没有声音”——系统播放器里画面
+  仍是冻住的（截图那一帧）、没声音，时钟却在实时走（66.991→72.012
+  →77.033）。结论修正：系统播放器也救不了，因为它底层仍走 WebKit
+  的媒体管线（与视频元素共享同一条管线），继承了同样的呈现死掉。
+- 注意：心跳里的 `frames_presented` 在系统播放器期间仍停在 2~3——那
+  是视频元素自己的 rVFC，系统播放器走自己的呈现层不触发它，不能拿
+  它判断系统播放器；以 Han 的直接反馈为准。
+- 剩下的路只有一条：Tauri 原生 AVPlayer 插件（Swift 插件 + Rust 命
+  令，AVPlayerViewController 在应用进程内直接播本机媒体服务器的
+  m3u8，彻底绕开 WebKit；原生 HGhub app 的 AVPlayer 在 LiveContainer
+  里能正常播，证明这条路本身通）。信息流内嵌播放仍是冻住的。
+
+## 1.2.10：原生 AVPlayer 插件（2026-11-11，待 Han 测）
+
+- 插件 `tauri-plugin-native-player`（`src-tauri/plugins/`，path 依赖）：
+  Tauri 2 移动插件，按官方 Mobile Plugin Development 文档与
+  `tauri-plugin-opener`（v2.7.2，同一套 API）照着写——Rust 侧
+  `tauri::ios_plugin_binding!` + `api.register_ios_plugin` +
+  `PluginHandle::run_mobile_plugin("play", ...)`；Swift 侧
+  `class NativePlayerPlugin: Plugin`，`@objc func play(_ invoke: Invoke)`，
+  `@_cdecl("init_plugin_native_player") public func initPlugin() -> Plugin`
+  （public 不可少，Release 构建会 strip 掉非 public 的入口符号）。
+- Swift 呈现：`manager.viewController?.present(AVPlayerViewController,
+  animated: true)`，播 `http://127.0.0.1:<port>/hls?u=<m3u8>`（本机媒
+  体服务器，分片/key 全走本地代理，AVPlayer 不用直连 CDN）。关闭时
+  （Done/下滑，`playerViewControllerDidEndDismissalTransition`）先
+  `pause()` 再 `invoke.resolve(["position": <秒>])`；Rust 的 `play`
+  命令在 `spawn_blocking` 里等这个结果（不占 tokio 工作线程）。
+- v1 限制：画中画关掉了（`allowsPictureInPicturePlayback = false`，
+  它的生命周期会多一条 dismissal 路径）；同一时间只开一个原生播放器，
+  第二次点“全屏”会拒绝（already playing）；关闭时内联播放器跳回关
+  闭点的进度、仍暂停（不自动续播）。
+- 前端 `enterFs`（Feed.tsx）：iOS 上先试原生插件（内联先暂停，关闭
+  后 seek 到返回的 position，记 `video.native_play` {ok, position /
+  detail}）；插件不可用/取地址失败时回退到 1.2.9 的系统全屏，再不行
+  走 CSS 全屏。`api.ts` 新增 `playNative(url)`（invoke
+  `plugin:native-player|play`）。能力文件加 `native-player:default`
+  （插件 `permissions/default.toml` 的 `[default]` 集引用自动生成的
+  `allow-play`）。
+- 版本 1.2.10。本地验证：`npm run build`（tsc + vite）通过；Rust
+  侧本机没法完整 check（Linux 桌面构建缺 gdk，iOS target 构建缺
+  xcrun/iOS SDK），以 CI（macOS + Xcode）的构建结果为准。
+- 验证：装 v1.2.10-ios，点开视频后直接点右侧操作栏的“全屏”，看原生
+  播放器里画面动不动、有没有声音；再点 Done 回来，确认内联播放器
+  回到了关闭点的进度（暂停）。
