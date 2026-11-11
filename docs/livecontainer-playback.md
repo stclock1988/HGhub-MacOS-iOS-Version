@@ -439,3 +439,27 @@ Android 继续 `http://hg.localhost` + MSE。
   回到了关闭点的进度（暂停）。若 Done 后内联没有反应（一直卡住），
   说明 `presentationControllerDidDismiss` 没触发——那时再换
   `viewDidDisappear` 兜底。
+
+## 1.2.12：关闭信号加 viewDidDisappear 兜底（2026-11-11，待 Han 测）
+
+- 现象：Han 测 1.2.11——第一次点全屏原生播放器能播，点 Done 回来
+  后，再点全屏又卡住了（冻住，跟原来一样）。
+- 最可能的根因：第一次 Done 之后，关闭信号没触发——
+  `presentationControllerDidDismiss` 没跑起来（很可能
+  `vc.presentationController` 在 present 完成回调里就是 nil，delegate
+  没设上）。于是 `finish` 没走、`pendingInvoke` 一直占着，第二次
+  `play` 被拒（"already playing"），前端退回到冻住的系统播放器。
+  （待 Han 发日志里的 `video.native_play` 确认：若第二次是
+  `ok: false, detail: "already playing"` 就是这个。）
+- 改法：关闭信号走两条路，任一触发都能让 `play` 返回；`finish` 有
+  `pendingInvoke` 守卫，第二次调用是 no-op：
+  1. 保留 `presentationControllerDidDismiss`（Done/下滑，只在真正
+     关闭时触发）。
+  2. 加 `NativePlayerViewController` 子类，重写 `viewDidDisappear`，
+     用 `isBeingDismissed` 把关——只在真正关闭时触发，音量/投屏路
+     由选择器只是盖在上面时不触发。生命周期钩子在关闭时一定会跑，
+     兜住了 delegate 没设上的情况。
+- 验证：装 v1.2.12-ios，同一集反复点全屏 → Done → 再点全屏，每次
+  都该跳出原生播放器、画面动、有声音；Done 回来内联回到关闭点进
+  度（暂停）。若第二次还是卡住，把日志发来，看 `video.native_play`
+  的 ok/detail 再定。
