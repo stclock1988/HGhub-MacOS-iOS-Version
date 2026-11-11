@@ -14,14 +14,24 @@
 // position (seconds) where playback stopped, so the inline player can
 // jump back to that point (staying paused).
 //
-// Dismissal is noticed via UIAdaptivePresentationControllerDelegate's
-// presentationControllerDidDismiss (fires for the Done button and for a
-// swipe, and only on a real dismissal — not when a route picker merely
-// covers the player). The AVPlayerViewControllerDelegate dismissal
-// callbacks (playerViewControllerWill/DidEndDismissalTransition) are
-// marked @available(iOS, unavailable) in the iOS 26 SDK, so they cannot
-// be implemented at all — compiling them fails the build (2026-11-11,
-// 1.2.10 CI).
+// Dismissal is noticed two ways (either one resolves the `play`
+// command; `finish` is guarded so a second call is a no-op):
+//   1. UIAdaptivePresentationControllerDelegate's
+//      presentationControllerDidDismiss — fires for Done and for a swipe,
+//      and only on a real dismissal.
+//   2. NativePlayerViewController.viewDidDisappear, gated on
+//      isBeingDismissed — a backup in case the presentation-controller
+//      delegate is never set (e.g. presentationController is nil when the
+//      present completion runs). The gate keeps a route picker merely
+//      covering the player from triggering it.
+// The AVPlayerViewControllerDelegate dismissal callbacks
+// (playerViewControllerWill/DidEndDismissalTransition) are marked
+// @available(iOS, unavailable) in the iOS 26 SDK, so they cannot be
+// implemented at all — compiling them fails the build (2026-11-11,
+// 1.2.10 CI). 1.2.11 relied on (1) alone; Han found the second
+// fullscreen tap after a return gets stuck, which fits (1) not firing
+// and the second `play` being rejected as "already playing", so the
+// frontend falls back to the frozen system player (2026-11-11).
 
 import AVKit
 import Foundation
@@ -35,9 +45,24 @@ struct PlayArgs: Decodable {
   let url: String
 }
 
+/// AVPlayerViewController subclass that reports when its view leaves the
+/// screen because it is being dismissed (Done / swipe). A plain
+/// UIViewController lifecycle hook — it always fires on dismissal — and
+/// the isBeingDismissed gate keeps a route picker merely covering the
+/// player from triggering it.
+final class NativePlayerViewController: AVPlayerViewController {
+  var onDisappear: (() -> Void)?
+  override func viewDidDisappear(_ animated: Bool) {
+    super.viewDidDisappear(animated)
+    if isBeingDismissed {
+      onDisappear?()
+    }
+  }
+}
+
 class NativePlayerPlugin: Plugin, UIAdaptivePresentationControllerDelegate {
   private var player: AVPlayer?
-  private var playerVC: AVPlayerViewController?
+  private var playerVC: NativePlayerViewController?
   private var pendingInvoke: Invoke?
 
   @objc public func play(_ invoke: Invoke) throws {
@@ -75,8 +100,12 @@ class NativePlayerPlugin: Plugin, UIAdaptivePresentationControllerDelegate {
       return
     }
     let player = AVPlayer(url: url)
-    let vc = AVPlayerViewController()
+    let vc = NativePlayerViewController()
     vc.player = player
+    vc.onDisappear = { [weak self] in
+      guard let self else { return }
+      self.finish(position: self.currentPosition())
+    }
     vc.showsPlaybackControls = true
     // v1: no Picture in Picture. Its lifecycle adds a second dismissal
     // path (player keeps playing after the sheet goes away); the Done
