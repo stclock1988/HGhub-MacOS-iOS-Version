@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { api, cover, fmt, fmtTime, isIos, isMobile } from "../api";
+import { api, cover, fmt, fmtTime, isIos, isMobile, nativePlaybackUrl, playNative } from "../api";
 import { tracePlayback } from "../playbackDiagnostics";
 import type { Detail, Episode, Post, VideoCard } from "../types";
 import { useStore } from "../store";
@@ -255,23 +255,48 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
   /* 进入 / 退出全屏：对横屏视频直接调用原生屏幕方向切换，让手机系统界面真正横过来。
      1.2.9：手机端真正能点的“全屏”按钮（右侧操作栏与“横屏全屏”）
      走的都是 enterFs，不是 PlayerControls 的 toggleFull——1.2.7
-     只接了 toggleFull，所以系统路径一次都没触发。先试系统播放器
-     全屏（webkitEnterFullscreen），把呈现交给系统 AVPlayer 层，
-     绕开 WKWebView 在 LiveContainer 里几乎不呈现帧的合成器；
-     系统播放器接管了就不用再开 CSS 全屏，不可用时再走原来的路。 */
+     只接了 toggleFull，所以系统路径一次都没触发。
+     1.2.10：系统播放器也救不了——它底层仍走 WebKit 的媒体管线，
+     画面照样冻住、没声音（时钟在走）。所以先试原生 AVPlayer 插件
+     （应用进程内的 AVPlayerViewController，彻底绕开 WebKit，唯一能
+     出画面和声音的路）：内联播放器先暂停，原生播放器关闭时回到关闭
+     点的进度（仍暂停）。插件不可用/取地址失败时回退到 1.2.9 的系统
+     全屏，再不行走 CSS 全屏。 */
   const enterFs = useCallback(() => {
     videoRef.current?.trace("video.fullscreen_tap", { ios: isIos, via: "enterFs" });
-    if (isIos && videoRef.current?.systemFullscreen()) return;
-    keepPlayingThroughTransition();
-    setClean(false);
-    setFs(true);
-    if (isLandscapeVideo) {
-      invoke("set_orientation", { landscape: true }).catch(() => {});
-      try {
-        (screen.orientation as unknown as { lock?: (o: string) => Promise<void> })?.lock?.("landscape")?.catch(() => {});
-      } catch { /* ignore */ }
+    const cssFs = () => {
+      keepPlayingThroughTransition();
+      setClean(false);
+      setFs(true);
+      if (isLandscapeVideo) {
+        invoke("set_orientation", { landscape: true }).catch(() => {});
+        try {
+          (screen.orientation as unknown as { lock?: (o: string) => Promise<void> })?.lock?.("landscape")?.catch(() => {});
+        } catch { /* ignore */ }
+      }
+    };
+    if (isIos) {
+      void (async () => {
+        try {
+          if (!playUrl) throw new Error("no play url");
+          const url = await nativePlaybackUrl(playUrl);
+          if (!url) throw new Error("no native url");
+          videoRef.current?.pause();
+          const { position } = await playNative(url);
+          videoRef.current?.trace("video.native_play", { ok: true, position });
+          if (Number.isFinite(position) && position > 0) {
+            videoRef.current?.seek(position);
+          }
+        } catch (e) {
+          videoRef.current?.trace("video.native_play", { ok: false, detail: (e as Error)?.message || "native play failed" });
+          if (videoRef.current?.systemFullscreen()) return;
+          cssFs();
+        }
+      })();
+      return;
     }
-  }, [isLandscapeVideo, setClean, setFs, keepPlayingThroughTransition]);
+    cssFs();
+  }, [isLandscapeVideo, setClean, setFs, keepPlayingThroughTransition, playUrl]);
 
   const exitFs = useCallback(() => {
     keepPlayingThroughTransition();
